@@ -42,7 +42,7 @@ void loadFile(const fs::path& p, std::string& body)
                 std::istreambuf_iterator<char>());
 }
 
-void isDownloadNeeded(const boost::network::uri::uri& uri, const fs::path& p, std::string& body_)
+bool getBodyAndSave(const boost::network::uri::uri& uri, const fs::path& p, std::string& body_)
 {
     using namespace boost::network;
     using namespace boost::network::http;
@@ -60,7 +60,8 @@ void isDownloadNeeded(const boost::network::uri::uri& uri, const fs::path& p, st
             if (rCType)
             {
                 const auto ctype = rCType.front().second;
-                if (  alg::starts_with(ctype , "text/html") 
+                bool isHtml = alg::starts_with(ctype , "text/html");
+                if (   isHtml 
                     || alg::starts_with(ctype , "text/css")
                     || alg::starts_with(ctype , "application/javascript")
                 )
@@ -69,6 +70,7 @@ void isDownloadNeeded(const boost::network::uri::uri& uri, const fs::path& p, st
                     body_ = body(response_);
                     saveFile(p, body_);
 		    std::cout << uri.string() << " -> " << p << std::endl;
+                    return isHtml;
                 }
                 else
                 {
@@ -89,7 +91,9 @@ void isDownloadNeeded(const boost::network::uri::uri& uri, const fs::path& p, st
     {
         loadFile(p, body_);
         std::cout << uri.string() <<  " <- loaded from file" << std::endl;
+        return true;
     }
+    return false;
 }
 
 boost::network::uri::uri removeFragmentPart(const boost::network::uri::uri& u)
@@ -142,7 +146,8 @@ std::set<boost::network::uri::uri> downloadAndParse(const boost::network::uri::u
     }
     
     std::string body_;
-    getBodyAndSave(url, file2Save, body_);
+    // is Html in body?
+    if(getBodyAndSave(url, file2Save, body_))
     {
         CDocument doc;
         doc.parse(body_.c_str());
@@ -160,7 +165,7 @@ std::set<boost::network::uri::uri> downloadAndParse(const boost::network::uri::u
         }	
         
         CSelection sel = doc.find("a[href], link[href][rel=\"stylesheet\"], script[src]");
-        for(int i = 0; i < sel.nodeNum(); ++i)
+        for(unsigned i = 0; i < sel.nodeNum(); ++i)
         {
             CNode node = sel.nodeAt(i);
             std::string us = node.tag() == "script" ? node.attribute("src")

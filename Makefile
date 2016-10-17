@@ -13,4 +13,4 @@ LIBS = $(LIBPATHS) -lgq -lgumbo -lcppnetlib-uri -lcppnetlib-client-connections\
 
 
 all :
-	$(CXX) -std=c++11 main.cpp $(INCLUDE) $(LIBS) -o $(BIN)
+	$(CXX) -std=c++11 -Wall main.cpp $(INCLUDE) $(LIBS) -o $(BIN)
