@@ -52,25 +52,43 @@ void isDownloadNeeded(const boost::network::uri::uri& uri, const fs::path& p, st
         client::request request_(uri);
         client client_;
         client::response response_ = client_.head(request_);
-        
-        auto rCType = headers(response_)["Content-Type"];
-        if (rCType)
+        auto status_ = status(response_);
+
+        if(status_ == 200)
         {
-            const auto ctype = rCType.front().second;
-            if (  alg::starts_with(ctype , "text/html") 
-                || alg::starts_with(ctype , "text/css")
-                || alg::starts_with(ctype , "application/javascript")
-            )
+            auto rCType = headers(response_)["Content-Type"];
+            if (rCType)
             {
-                client::response response_ = client_.get(request_);
-                body_ = body(response_);
-                saveFile(p, body_);
+                const auto ctype = rCType.front().second;
+                if (  alg::starts_with(ctype , "text/html") 
+                    || alg::starts_with(ctype , "text/css")
+                    || alg::starts_with(ctype , "application/javascript")
+                )
+                {
+                    client::response response_ = client_.get(request_);
+                    body_ = body(response_);
+                    saveFile(p, body_);
+		    std::cout << uri.string() << " -> " << p << std::endl;
+                }
+                else
+                {
+                    std::cout << uri.string() << " - document is ignored" << std::endl;
+                }
             }
+            else
+            {
+    	       std::cout << uri.string() << " - document has unknown type" << std::endl;
+            }
+        }
+        else
+        {
+    	    std::cout << uri.string() << " - error response. Status : " << status_  << std::endl;
         }
     }
     else
     {
         loadFile(p, body_);
+        std::cout << uri.string() <<  " <- loaded from file" << std::endl;
     }
 }
 
@@ -92,6 +110,19 @@ boost::network::uri::uri removeFragmentPart(const boost::network::uri::uri& u)
     return u;
 }
 
+boost::network::uri::uri getBasePart(const boost::network::uri::uri& u)
+{
+    using namespace boost::network;
+    
+    uri::uri baseUrl;
+    uri::builder b(baseUrl);
+    b.set_scheme(u.scheme());
+    b.set_host(u.host());
+    if(!u.port().empty()) b.set_port(u.port());
+    
+    return baseUrl;
+}
+
 std::set<boost::network::uri::uri> downloadAndParse(const boost::network::uri::uri& url, const fs::path& basePath)
 {
     using namespace boost::network;
@@ -99,13 +130,19 @@ std::set<boost::network::uri::uri> downloadAndParse(const boost::network::uri::u
     
     std::set<boost::network::uri::uri> res;
     std::string query = url.query();
-    fs::path rel_path = url.path();
-    fs::path file2Save = basePath / (url.path() + (query.empty() ? std::string() : '?' + query)) / "index.html";
-    
-    std::cout << url.string() << " -> " << file2Save << std::endl;
+    auto ext = fs::path(url.path()).extension();
+    fs::path file2Save;
+    if(ext == "html" || ext == "css" || ext == "js")
+    {
+        file2Save = basePath / (url.path() + (query.empty() ? std::string() : '?' + query));
+    }
+    else
+    {
+        file2Save = basePath / (url.path() + (query.empty() ? std::string() : '?' + query)) / "index.html";
+    }
     
     std::string body_;
-    isDownloadNeeded(url, file2Save, body_);
+    getBodyAndSave(url, file2Save, body_);
     {
         CDocument doc;
         doc.parse(body_.c_str());
@@ -115,14 +152,11 @@ std::set<boost::network::uri::uri> downloadAndParse(const boost::network::uri::u
         CSelection base_sel = doc.find("head base[href]");
         if(base_sel.nodeNum() > 0)
         {
-            baseUrl = base_sel.nodeAt(0).attribute("href");
+            baseUrl = alg::trim_copy(base_sel.nodeAt(0).attribute("href"));
         }
         else
         {
-            uri::builder b(baseUrl);
-            b.set_scheme(url.scheme());
-            b.set_host(url.host());
-            if(!url.port().empty()) b.set_port(url.port());
+            baseUrl = getBasePart(url);
         }	
         
         CSelection sel = doc.find("a[href], link[href][rel=\"stylesheet\"], script[src]");
@@ -170,7 +204,7 @@ int main(int argc, char * argv[])
 {
     if (argc != 3)
     {
-        std::cerr << "Enter Url" << std::endl;
+        std::cerr << "expected args: <URL> <path>" << std::endl;
         return -1;
     }
     using namespace boost::network;
@@ -186,7 +220,7 @@ int main(int argc, char * argv[])
     
     while(links.size() > 0 || futures.size() > 0)
     {
-        if(links.size() > 0 && futures.size() < 21)
+        if(links.size() > 0 && futures.size() < 33)
         {
             uri::uri u = *links.begin();
             links.erase(links.begin());
@@ -195,13 +229,8 @@ int main(int argc, char * argv[])
                 continue;
             }
             auto f = std::async(std::launch::async, downloadAndParse, u, basePath);
-            /*  f.wait();
-             *        auto res = f.get();
-             *	links.insert(res.begin(),res.end());
-             *  
-             *	std::set_difference(res.begin(), res.end(), downloaded.begin(), downloaded.end(), std::inserter(links, links.end()));
-             */futures.push_back(std::move(f));
-                   downloaded.insert(u); // ???
+            futures.push_back(std::move(f));
+            downloaded.insert(u);
         }
         
         for(auto i = futures.begin(); i != futures.end(); )
@@ -219,9 +248,8 @@ int main(int argc, char * argv[])
                 ++i;
             }
         }
-        //std::cout << "Links size: " << links.size() << " | Downloaded size: " << downloaded.size() << std::endl;
     }
     
-    std::cout << "Links: " << links.size() << " | Downloaded: " << downloaded.size() << std::endl;
+    std::cout << "Downloaded: " << downloaded.size() << std::endl;
     return 0;
 }
